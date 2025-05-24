@@ -152,7 +152,7 @@ func (s *Client) listen() {
 				if DebugMode {
 					log.Printf("Unmarshal received message failed: %v", err)
 				}
-				result.err = fmt.Errorf("Unmarshal received message failed: %v", err)
+				result.err = fmt.Errorf("unmarshal received message failed: %v - response: %s", err, string(bytes))
 			} else if msg.Error != "" {
 				result.err = errors.New(msg.Error)
 			}
@@ -226,12 +226,92 @@ func (s *Client) request(ctx context.Context, method string, params []interface{
 	c := make(chan *container, 1)
 
 	s.handlersLock.Lock()
+	//Ekliptor> fix nil map cash on shutdown (reconnect)
+	if s.IsShutdown() || s.handlers == nil {
+		s.handlersLock.Unlock()
+		return ErrServerShutdown
+	}
+	//Ekliptor< fix nil map cash on shutdown (reconnect)
 	s.handlers[msg.ID] = c
 	s.handlersLock.Unlock()
 
 	defer func() {
 		s.handlersLock.Lock()
 		delete(s.handlers, msg.ID)
+		s.handlersLock.Unlock()
+	}()
+
+	var resp *container
+	select {
+	case resp = <-c:
+	case <-ctx.Done():
+		return ErrTimeout
+	}
+
+	if resp.err != nil {
+		return resp.err
+	}
+
+	if v != nil {
+		err = json.Unmarshal(resp.content, v)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Client) requestBatch(ctx context.Context, method []string, params [][]interface{}, v interface{}) error {
+	select {
+	case <-s.quit:
+		return ErrServerShutdown
+	default:
+	}
+
+	if len(method) == 0 {
+		return errors.New("method can not be empty")
+	} else if len(method) != len(params) {
+		return errors.New("method and params must have the same length")
+	}
+
+	msg := make([]request, len(method))
+	for i := range method {
+		msg[i] = request{
+			ID:     atomic.AddUint64(&s.nextID, 1),
+			Method: method[i],
+			Params: params[i],
+		}
+	}
+
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	bytes = append(bytes, nl)
+
+	err = s.transport.SendMessage(bytes)
+	if err != nil {
+		s.Shutdown()
+		return err
+	}
+
+	c := make(chan *container, 1)
+
+	s.handlersLock.Lock()
+	//Ekliptor> fix nil map cash on shutdown (reconnect)
+	if s.IsShutdown() || s.handlers == nil {
+		s.handlersLock.Unlock()
+		return ErrServerShutdown
+	}
+	//Ekliptor< fix nil map cash on shutdown (reconnect)
+	s.handlers[msg[0].ID] = c // use the 1st msg to receive the stream and for mutex
+	s.handlersLock.Unlock()
+
+	defer func() {
+		s.handlersLock.Lock()
+		delete(s.handlers, msg[0].ID)
 		s.handlersLock.Unlock()
 	}()
 

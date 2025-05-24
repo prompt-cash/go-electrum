@@ -87,3 +87,24 @@ func (s *Client) ListUnspent(ctx context.Context, scripthash string) ([]*ListUns
 
 	return resp.Result, err
 }
+
+// ListUnspentBatch returns an ordered list of UTXOs for a scripthash.
+func (s *Client) ListUnspentBatch(ctx context.Context, scripthash []string) ([]*ListUnspentResult, error) {
+	var resp []ListUnspentResp
+
+	// TODO must be sent as object, we need requestBatch() https://github.com/cculianu/Fulcrum/issues/99
+	// TODO still not supported? res [{"id":3,"jsonrpc":"2.0","result":[]},{"id":2,"jsonrpc":"2.0","result":[]},{"id":4,"jsonrpc":"2.0","result":[]}]
+	method := make([]string, len(scripthash))
+	params := make([][]interface{}, len(scripthash))
+	for i, v := range scripthash {
+		method[i] = "blockchain.scripthash.listunspent"
+		params[i] = []interface{}{v}
+	}
+	err := s.requestBatch(ctx, method, params, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	//return resp.Result, err
+	return nil, nil // TODO
+}
