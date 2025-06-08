@@ -66,6 +66,7 @@ type Client struct {
 
 	Error chan error
 	quit  chan struct{}
+	once  sync.Once //Ekliptor> fix channel close panic
 
 	nextID uint64
 }
@@ -338,7 +339,11 @@ func (s *Client) requestBatch(ctx context.Context, method []string, params [][]i
 
 func (s *Client) Shutdown() {
 	if !s.IsShutdown() {
+		//Ekliptor> fix channel close panic
+		//val, ok := <-s.quit; if ok {
 		close(s.quit)
+		s.once.Do(func() { close(s.quit) })
+		//Ekliptor< fix channel close panic
 	}
 	if s.transport != nil {
 		_ = s.transport.Close()
