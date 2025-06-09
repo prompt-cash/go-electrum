@@ -341,7 +341,6 @@ func (s *Client) Shutdown() {
 	if !s.IsShutdown() {
 		//Ekliptor> fix channel close panic
 		//val, ok := <-s.quit; if ok {
-		close(s.quit)
 		s.once.Do(func() { close(s.quit) })
 		//Ekliptor< fix channel close panic
 	}
