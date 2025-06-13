@@ -56,7 +56,8 @@ type container struct {
 
 // Client stores information about the remote server.
 type Client struct {
-	transport Transport
+	transport   Transport
+	transportMu sync.Mutex //Ekliptor> Transport mutex
 
 	handlers     map[uint64]chan *container
 	handlersLock sync.RWMutex
@@ -133,9 +134,12 @@ func (s *Client) listen() {
 		if s.IsShutdown() {
 			break
 		}
+		s.transportMu.Lock() //Ekliptor> Transport mutex
 		if s.transport == nil {
+			s.transportMu.Unlock() //Ekliptor> Transport mutex
 			break
 		}
+		s.transportMu.Unlock() //Ekliptor> Transport mutex
 		select {
 		case <-s.quit:
 			return
@@ -218,7 +222,15 @@ func (s *Client) request(ctx context.Context, method string, params []interface{
 
 	bytes = append(bytes, nl)
 
-	err = s.transport.SendMessage(bytes)
+	//Ekliptor> Transport mutex
+	s.transportMu.Lock()
+	if s.transport != nil {
+		err = s.transport.SendMessage(bytes)
+	} else {
+		err = ErrServerShutdown
+	}
+	s.transportMu.Unlock()
+	//Ekliptor< Transport mutex
 	if err != nil {
 		s.Shutdown()
 		return err
@@ -292,7 +304,15 @@ func (s *Client) requestBatch(ctx context.Context, method []string, params [][]i
 
 	bytes = append(bytes, nl)
 
-	err = s.transport.SendMessage(bytes)
+	//Ekliptor> Transport mutex
+	s.transportMu.Lock()
+	if s.transport != nil {
+		err = s.transport.SendMessage(bytes)
+	} else {
+		err = ErrServerShutdown
+	}
+	s.transportMu.Unlock()
+	//Ekliptor< Transport mutex
 	if err != nil {
 		s.Shutdown()
 		return err
@@ -344,10 +364,14 @@ func (s *Client) Shutdown() {
 		s.once.Do(func() { close(s.quit) })
 		//Ekliptor< fix channel close panic
 	}
+	//Ekliptor> Transport mutex
+	s.transportMu.Lock()
 	if s.transport != nil {
 		_ = s.transport.Close()
 	}
 	s.transport = nil
+	s.transportMu.Unlock()
+	//Ekliptor< Transport mutex
 	s.handlers = nil
 	s.pushHandlers = nil
 }
