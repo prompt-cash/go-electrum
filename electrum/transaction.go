@@ -56,6 +56,7 @@ type Vout struct {
 	N            uint32       `json:"n"`
 	ScriptPubkey ScriptPubkey `json:"scriptpubkey"`
 	Value        float64      `json:"value"`
+	TokenData    *TokenData   `json:"token_data,omitempty"` // present only for CashToken outputs (protocol >= 1.5.0)
 }
 
 // ScriptPubkey represents the script of that transaction output.
