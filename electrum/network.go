@@ -9,14 +9,21 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
 	// ClientVersion identifies the client version/name to the remote server
 	ClientVersion = "go-electrum1.1"
 
-	// ProtocolVersion identifies the support protocol version to the remote server
-	ProtocolVersion = "1.4"
+	// ProtocolVersion identifies the support protocol version to the remote server.
+	// 1.5.x is required for BCH CashToken support (server.version must negotiate >= 1.5.0
+	// before the server will return token_data / accept the token_filter argument).
+	ProtocolVersion = "1.5.3"
+
+	// defaultHandshakeTimeout bounds how long the automatic server.version negotiation
+	// performed on connect may take, even if the caller passes a context without a deadline.
+	defaultHandshakeTimeout = 15 * time.Second
 
 	nl = byte('\n')
 )
@@ -70,6 +77,39 @@ type Client struct {
 	once  sync.Once //Ekliptor> fix channel close panic
 
 	nextID uint64
+
+	// serverVer / protocolVer hold the result of the server.version negotiation performed on
+	// connect. They are written once (before the constructor returns) and read-only afterwards.
+	serverVer   string
+	protocolVer string
+}
+
+// negotiateProtocol sends server.version to identify the client and negotiate the protocol
+// version. This must happen before any other request, or the server defaults to an older
+// protocol (and, on BCH, will not return token_data / accept the token_filter argument).
+func (s *Client) negotiateProtocol(ctx context.Context) error {
+	hctx, cancel := context.WithTimeout(ctx, defaultHandshakeTimeout)
+	defer cancel()
+
+	serverVer, protocolVer, err := s.ServerVersion(hctx)
+	if err != nil {
+		return err
+	}
+	s.serverVer = serverVer
+	s.protocolVer = protocolVer
+	return nil
+}
+
+// NegotiatedProtocolVersion returns the protocol version negotiated with the server during
+// connect (e.g. "1.5.3"), or "" if negotiation has not completed.
+func (s *Client) NegotiatedProtocolVersion() string {
+	return s.protocolVer
+}
+
+// ServerSoftwareVersion returns the server software identifier reported during the connect
+// negotiation (e.g. "Fulcrum 2.0"), or "" if negotiation has not completed.
+func (s *Client) ServerSoftwareVersion() string {
+	return s.serverVer
 }
 
 // NewClientTCP initialize a new client for remote server and connects to the remote server using TCP
@@ -89,6 +129,13 @@ func NewClientTCP(ctx context.Context, addr string) (*Client, error) {
 
 	c.transport = transport
 	go c.listen()
+
+	// Negotiate the protocol version immediately, so token-aware calls work and every
+	// reconnect (which recreates the client via this constructor) renegotiates.
+	if err := c.negotiateProtocol(ctx); err != nil {
+		c.Shutdown()
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -110,6 +157,13 @@ func NewClientSSL(ctx context.Context, addr string, config *tls.Config) (*Client
 
 	c.transport = transport
 	go c.listen()
+
+	// Negotiate the protocol version immediately, so token-aware calls work and every
+	// reconnect (which recreates the client via this constructor) renegotiates.
+	if err := c.negotiateProtocol(ctx); err != nil {
+		c.Shutdown()
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -134,19 +188,22 @@ func (s *Client) listen() {
 		if s.IsShutdown() {
 			break
 		}
-		s.transportMu.Lock() //Ekliptor> Transport mutex
-		if s.transport == nil {
-			s.transportMu.Unlock() //Ekliptor> Transport mutex
+		//Ekliptor> Transport mutex: capture the transport under the lock and use the local below,
+		// so the select does not read s.transport concurrently with Shutdown() setting it to nil
+		// (data race + nil-deref crash).
+		s.transportMu.Lock()
+		transport := s.transport
+		s.transportMu.Unlock()
+		if transport == nil {
 			break
 		}
-		s.transportMu.Unlock() //Ekliptor> Transport mutex
 		select {
 		case <-s.quit:
 			return
-		case err := <-s.transport.Errors():
+		case err := <-transport.Errors():
 			s.Error <- err
 			s.Shutdown()
-		case bytes := <-s.transport.Responses():
+		case bytes := <-transport.Responses():
 			result := &container{
 				content: bytes,
 			}

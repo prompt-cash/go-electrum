@@ -15,6 +15,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// NewClientTCP already negotiated the protocol version on connect (server.version); the
+	// result is available via the accessors below. Calling ServerVersion again is harmless.
+	log.Printf("Negotiated on connect: %s [Protocol %s]", client.ServerSoftwareVersion(), client.NegotiatedProtocolVersion())
+
 	serverVer, protocolVer, err := client.ServerVersion(context.Background())
 	if err != nil {
 		log.Fatal(err)
