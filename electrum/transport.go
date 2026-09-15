@@ -28,7 +28,7 @@ func NewTCPTransport(ctx context.Context, addr string) (*TCPTransport, error) {
 	tcp := &TCPTransport{
 		conn:      conn,
 		responses: make(chan []byte),
-		errors:    make(chan error),
+		errors:    make(chan error, 1), //Ekliptor> buffered: listen() sends at most 1 error, never block if the client stopped reading
 	}
 
 	go tcp.listen()
@@ -50,7 +50,7 @@ func NewSSLTransport(ctx context.Context, addr string, config *tls.Config) (*TCP
 	tcp := &TCPTransport{
 		conn:      conn,
 		responses: make(chan []byte),
-		errors:    make(chan error),
+		errors:    make(chan error, 1), //Ekliptor> buffered: listen() sends at most 1 error, never block if the client stopped reading
 	}
 
 	go tcp.listen()

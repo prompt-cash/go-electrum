@@ -201,8 +201,15 @@ func (s *Client) listen() {
 		case <-s.quit:
 			return
 		case err := <-transport.Errors():
-			s.Error <- err
+			//Ekliptor> nobody may be reading s.Error: don't block forever (goroutine + socket leak),
+			// shut down so pending and future requests fail fast with ErrServerShutdown
+			select {
+			case s.Error <- err:
+			default:
+			}
 			s.Shutdown()
+			return
+			//Ekliptor< nobody may be reading s.Error
 		case bytes := <-transport.Responses():
 			result := &container{
 				content: bytes,
@@ -429,8 +436,14 @@ func (s *Client) Shutdown() {
 	s.transport = nil
 	s.transportMu.Unlock()
 	//Ekliptor< Transport mutex
+	//Ekliptor> lock handler maps: listen() may shut down while a request still deletes its handler
+	s.handlersLock.Lock()
 	s.handlers = nil
+	s.handlersLock.Unlock()
+	s.pushHandlersLock.Lock()
 	s.pushHandlers = nil
+	s.pushHandlersLock.Unlock()
+	//Ekliptor< lock handler maps
 }
 
 func (s *Client) IsShutdown() bool {
