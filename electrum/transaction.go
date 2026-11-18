@@ -56,7 +56,10 @@ type Vout struct {
 	N            uint32       `json:"n"`
 	ScriptPubkey ScriptPubkey `json:"scriptpubkey"`
 	Value        float64      `json:"value"`
-	TokenData    *TokenData   `json:"token_data,omitempty"` // present only for CashToken outputs (protocol >= 1.5.0)
+	// TokenData is present only for CashToken outputs. Verbose blockchain.transaction.get returns
+	// the node's own JSON, which names this key "tokenData" (camelCase), unlike the "token_data"
+	// key used by blockchain.scripthash.listunspent.
+	TokenData *TokenData `json:"tokenData,omitempty"`
 }
 
 // ScriptPubkey represents the script of that transaction output.
